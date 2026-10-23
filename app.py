@@ -6,187 +6,196 @@
 import streamlit as st
 import streamlit.components.v1 as components
 
-# 设置页面配置
-st.set_page_config(page_title="Kinetic Typography Studio", page_icon="🔤", layout="wide")
+st.set_page_config(page_title="3D Particle Typography", page_icon="✨", layout="wide")
 
-# 标题和介绍
-st.title("🔤 Kinetic Typography Studio")
-st.markdown("Create a dynamic, interactive poster. Move your mouse over the letters to disturb them.")
+st.title("✨ 3D Kinetic Typography")
+st.markdown("Type a word and interact with the 3D particles. **Drag to rotate, scroll to zoom.**")
 
-# --- 交互输入区 (Input) ---
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
-    user_word = st.text_input("Text", value="CHAOS")
-    # 进阶5：错误处理 - 长度限制
-    if len(user_word) > 15:
-        st.info("💡 For the best visual results, use 15 characters or fewer.")
-
+    user_word = st.text_input("Text", value="HELLO")
 with col2:
-    font_size = st.slider("Font Size", min_value=50, max_value=200, value=120, step=10)
-
+    color = st.color_picker("Particle Color", "#00ffcc")
 with col3:
-    gravity = st.slider("Wave Amplitude", min_value=0, max_value=150, value=40)
-    crowding = st.slider("Crowding", min_value=0.5, max_value=2.0, value=1.0, step=0.1)
-
+    size = st.slider("Particle Size", min_value=0.5, max_value=3.0, value=1.2, step=0.1)
 with col4:
-    text_color = st.color_picker("Neon Color", "#00FFCC")
+    cohesion = st.slider("Cohesion (聚拢程度)", min_value=0, max_value=100, value=100, step=5)
 
-# --- 错误处理 (Error Handling) ---
 if not user_word.strip():
-    st.warning("⚠️ Please enter a valid word. The current word is empty.")
-    st.stop() # 如果输入为空，停止执行后续渲染，防崩溃
+    st.warning("⚠️ Please enter a valid word.")
+    st.stop()
 
-# --- 前端渲染区 (Response & Feedback) ---
-# 进阶1：选择极具张力的 Anton 字体
-# 进阶2：加入 CSS 霓虹渐变和混合模式
-# 进阶3：加入鼠标跟随斥力物理引擎
+# 使用 Three.js 构建 3D 粒子
 html_code = f"""
 <!DOCTYPE html>
 <html>
 <head>
 <style>
-    /* 引入 Google Fonts 的 Anton 字体 */
-    @import url('https://fonts.googleapis.com/css2?family=Anton&display=swap');
-    
-    body {{
-        margin: 0;
-        padding: 0;
-        height: 500px;
-        background: #0a0a0c; /* 极深色背景 */
-        /* 进阶：动态深色星空渐变背景 */
-        background-image: radial-gradient(circle at 50% 50%, #1a1a2e 0%, #0a0a0c 80%);
-        color: #fff;
-        font-family: 'Anton', sans-serif;
-        overflow: hidden; /* 防止滚动条出现 */
-        display: flex;
-        justify-content: center;
-        align-items: center;
-    }}
-
-    #canvas-container {{
-        position: relative;
-        width: 100%;
-        height: 100%;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-    }}
-
-    .letter {{
-        position: absolute;
-        font-size: {font_size}px;
-        color: {text_color};
-        /* 混合模式：让重叠的字母产生反色/发光效果 */
-        mix-blend-mode: screen;
-        /* 霓虹发光阴影 */
-        text-shadow: 0 0 10px {text_color}80, 0 0 30px {text_color}40;
-        transition: transform 0.1s ease-out;
-        pointer-events: none;
-        user-select: none;
-    }}
+    body {{ margin: 0; overflow: hidden; background-color: #050510; }}
+    canvas {{ display: block; }}
 </style>
+<!-- 引入 Three.js -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 <body>
 
-<div id="canvas-container"></div>
-
 <script>
-    const container = document.getElementById("canvas-container");
-    const word = "{user_word}";
-    const crowding = {crowding};
-    const gravity = {gravity};
-    const fontSize = {font_size};
+    const userWord = "{user_word}";
+    const particleColor = "{color}";
+    const particleSize = {size};
+    const targetCohesion = {cohesion} / 100; // 0.0 到 1.0
 
-    // 动态创建字母元素
-    container.innerHTML = ""; 
-    const letters = [];
+    // 1. 设置场景、相机、渲染器
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x050510, 0.002);
     
-    // 计算总宽度，使其居中
-    const totalWidth = word.length * (fontSize * crowding * 0.6);
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.z = 60;
 
-    for (let i = 0; i < word.length; i++) {{
-        const span = document.createElement("span");
-        span.className = "letter";
-        span.innerText = word[i];
-        
-        // 基础横向位置：居中计算
-        span.dataset.baseX = (i * (fontSize * crowding * 0.6)) - (totalWidth / 2) + (totalWidth / word.length / 2);
-        span.dataset.phase = Math.random() * Math.PI * 2; // 随机波浪相位
-        container.appendChild(span);
-        letters.push(span);
+    const renderer = new THREE.WebGLRenderer({{ antialias: true }});
+    renderer.setSize(window.innerWidth, 500); // 匹配 Streamlit iframe 高度
+    document.body.appendChild(renderer.domElement);
+
+    // 2. 生成文字粒子数据
+    // 用一个隐藏的 2D canvas 把文字画出来，读取像素点转化为 3D 坐标
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = 600;
+    canvas.height = 200;
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 120px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(userWord, 300, 100);
+
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+
+    const particlesGeometry = new THREE.BufferGeometry();
+    const positions = [];
+    const targetPositions = []; // 用于聚拢
+    const velocities = []; // 用于爆炸
+
+    // 扫描像素
+    for (let y = 0; y < canvas.height; y += 2) {{
+        for (let x = 0; x < canvas.width; x += 2) {{
+            const index = (y * canvas.width + x) * 4;
+            if (data[index + 3] > 128) {{ // 如果像素不透明
+                // 转换到居中坐标系
+                const tx = (x - 300) * 0.5;
+                const ty = -(y - 100) * 0.5;
+                const tz = (Math.random() - 0.5) * 10; // 给一点厚度
+                
+                targetPositions.push({{ x: tx, y: ty, z: tz }});
+                
+                // 初始位置随机发散在空间中
+                positions.push(
+                    (Math.random() - 0.5) * 200,
+                    (Math.random() - 0.5) * 200,
+                    (Math.random() - 0.5) * 200
+                );
+                
+                // 爆炸速度
+                velocities.push({{
+                    x: (Math.random() - 0.5) * 0.5,
+                    y: (Math.random() - 0.5) * 0.5,
+                    z: (Math.random() - 0.5) * 0.5
+                }});
+            }}
+        }}
     }}
 
-    // 进阶3：鼠标监听 (用于物理斥力)
-    let mouseX = -1000;
-    let mouseY = -1000;
+    particlesGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
 
-    window.addEventListener('mousemove', (e) => {{
-        const rect = container.getBoundingClientRect();
-        mouseX = e.clientX - rect.left;
-        mouseY = e.clientY - rect.top;
+    // 3. 粒子材质
+    const particlesMaterial = new THREE.PointsMaterial({{
+        color: particleColor,
+        size: particleSize,
+        transparent: true,
+        opacity: 0.8,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
     }});
 
-    // 鼠标离开时重置位置
-    window.addEventListener('mouseleave', () => {{
-        mouseX = -1000;
-        mouseY = -1000;
+    const particleSystem = new THREE.Points(particlesGeometry, particlesMaterial);
+    scene.add(particleSystem);
+
+    // 4. 鼠标交互数据
+    let mouseX = 0;
+    let mouseY = 0;
+    document.addEventListener('mousemove', (e) => {{
+        mouseX = (e.clientX / window.innerWidth) * 2 - 1;
+        mouseY = -(e.clientY / window.innerHeight) * 2 + 1;
     }});
 
-    // 动画循环
-    let time = 0;
+    // 5. 动画循环
+    const clock = new THREE.Clock();
+    const positionsArray = particlesGeometry.attributes.position.array;
+
     function animate() {{
-        time += 0.05;
-        
-        letters.forEach((letter) => {{
-            // 基础排版
-            let x = parseFloat(letter.dataset.baseX);
-            let phase = parseFloat(letter.dataset.phase);
-            
-            // 波浪起伏
-            let y = Math.sin(time + phase) * gravity;
-            
-            // 拥挤度带来的旋转（越拥挤越歪斜）
-            let rotation = (crowding - 1.0) * 45 * Math.sin(time * 0.5 + phase);
+        requestAnimationFrame(animate);
+        const time = clock.getElapsedTime();
 
-            // --- 进阶：鼠标斥力计算 ---
-            const containerCenter = container.offsetWidth / 2;
-            const containerCenterY = container.offsetHeight / 2;
-            
-            // 计算字母在屏幕上的近似绝对位置
-            const letterX = containerCenter + x;
-            const letterY = containerCenterY + y;
+        // 旋转整个场景
+        particleSystem.rotation.y = mouseX * 0.5;
+        particleSystem.rotation.x = mouseY * 0.5;
 
-            const dx = letterX - mouseX;
-            const dy = letterY - mouseY;
-            const distance = Math.sqrt(dx * dx + dy * dy);
-            
-            // 斥力半径 (200px)
-            const forceRadius = 200;
-            let pushX = 0;
-            let pushY = 0;
+        // 更新粒子位置 (向目标位置移动或飘散)
+        for (let i = 0; i < positionsArray.length; i += 3) {{
+            const idx = i / 3;
+            const tx = targetPositions[idx].x;
+            const ty = targetPositions[idx].y;
+            const tz = targetPositions[idx].z;
 
-            if (distance < forceRadius && distance > 0) {{
-                // 距离越近，推力越大
-                const force = (forceRadius - distance) / forceRadius;
-                // 计算单位方向向量并乘以力
-                pushX = (dx / distance) * force * 80; 
-                pushY = (dy / distance) * force * 80;
+            let px = positionsArray[i];
+            let py = positionsArray[i+1];
+            let pz = positionsArray[i+2];
+
+            if (targetCohesion > 0.1) {{
+                // 聚拢逻辑 (弹簧阻尼)
+                px += (tx - px) * 0.05 * targetCohesion;
+                py += (ty - py) * 0.05 * targetCohesion;
+                pz += (tz - pz) * 0.05 * targetCohesion;
+            }} else {{
+                // 爆炸/漂移逻辑
+                px += velocities[idx].x * (1 - targetCohesion);
+                py += velocities[idx].y * (1 - targetCohesion);
+                pz += velocities[idx].z * (1 - targetCohesion);
+            }}
+            
+            // 鼠标排斥气场 (在 3D 空间产生轻微扭曲)
+            const distToCenter = Math.sqrt(px*px + py*py);
+            if (distToCenter < 50) {{
+                 px += mouseX * 0.5;
+                 py += mouseY * 0.5;
             }}
 
-            // 应用所有变换
-            letter.style.transform = `translate(${{x + pushX}}px, ${{y + pushY}}px) rotate(${{rotation}}deg)`;
-        }});
+            positionsArray[i] = px;
+            positionsArray[i+1] = py;
+            positionsArray[i+2] = pz;
+        }}
+
+        particlesGeometry.attributes.position.needsUpdate = true;
         
-        requestAnimationFrame(animate);
+        // 动态颜色微调（随时间和鼠标变化）
+        particlesMaterial.size = particleSize + Math.sin(time * 2) * 0.2;
+
+        renderer.render(scene, camera);
     }}
 
     animate();
+
+    // 响应窗口缩放
+    window.addEventListener('resize', () => {{
+        camera.aspect = window.innerWidth / 500;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, 500);
+    }});
 </script>
 
 </body>
 </html>
 """
 
-# 将 HTML 渲染到 Streamlit 中，设置高度
 components.html(html_code, height=520)
